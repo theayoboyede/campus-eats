@@ -1,62 +1,44 @@
-import { supabase } from '../config/supabaseClient.js';
+import supabase from '../config/supabaseClient.js';
 import bcrypt from 'bcryptjs';
-import { generateToken } from '../utils/generateToken.js';
+import jwt from 'jsonwebtoken';
 
-export const registerUser = async (req, res) => {
+export const register = async (req, res) => {
+  const { email, password, role } = req.body;
   try {
-    const { name, email, password, role = 'customer' } = req.body;
-    if (!email || !password) return res.status(400).json({ message: 'Email + password required' });
-
-    // check existing
-    const { data: existing } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', email)
-      .limit(1);
-
-    if (existing && existing.length) return res.status(400).json({ message: 'User already exists' });
-
-    const hashed = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     const { data, error } = await supabase
       .from('users')
-      .insert([{ name, email, password: hashed, role }])
-      .select()
-      .single();
+      .insert([{ email, password: hashedPassword, role }])
+      .select();
 
-    if (error) throw error;
-
-    return res.status(201).json({
-      user: { id: data.id, name: data.name, email: data.email, role: data.role },
-      token: generateToken(data.id, data.role)
-    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ message: 'User registered successfully', user: data[0] });
   } catch (err) {
-    return res.status(500).json({ message: err.message || err });
+    res.status(500).json({ error: err.message });
   }
 };
 
-export const loginUser = async (req, res) => {
+export const login = async (req, res) => {
+  const { email, password } = req.body;
   try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: 'Email + password required' });
-
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('users')
       .select('*')
       .eq('email', email)
-      .limit(1);
+      .single();
 
-    const user = data && data[0];
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
+    if (error || !data) return res.status(400).json({ error: 'Invalid credentials' });
 
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(401).json({ message: 'Invalid credentials' });
+    const isMatch = await bcrypt.compare(password, data.password);
+    if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
 
-    return res.json({
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
-      token: generateToken(user.id, user.role)
+    const token = jwt.sign({ id: data.id, role: data.role }, process.env.JWT_SECRET, {
+      expiresIn: '1d',
     });
+
+    res.json({ message: 'Login successful', token });
   } catch (err) {
-    return res.status(500).json({ message: err.message || err });
+    res.status(500).json({ error: err.message });
   }
 };
